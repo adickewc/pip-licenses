@@ -16,7 +16,6 @@ copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -40,6 +39,7 @@ from importlib.metadata import Distribution
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, List, Type, cast
 
+import tomlkit
 from prettytable import ALL as RULE_ALL
 from prettytable import FRAME as RULE_FRAME
 from prettytable import HEADER as RULE_HEADER
@@ -651,6 +651,7 @@ class CustomNamespace(argparse.Namespace):
     output_file: str
     ignore_packages: List[str]
     packages: List[str]
+    config_file: str
     with_system: bool
     with_authors: bool
     with_urls: bool
@@ -671,8 +672,44 @@ class CompatibleArgumentParser(argparse.ArgumentParser):
         namespace: None | CustomNamespace = None,
     ) -> CustomNamespace:
         args_ = cast(CustomNamespace, super().parse_args(args, namespace))
+        args_ = self.overwrite_with_args_from_config_file(args_)
         self._verify_args(args_)
         return args_
+
+    def overwrite_with_args_from_config_file(
+        self, args: CustomNamespace
+    ) -> CustomNamespace:
+        """
+        If a config-file is provided using the --config-file flag, this
+        functions overwrites all arguments that are present in the file.
+        """
+
+        if args.config_file is None:
+            return args
+        else:
+            if not Path(args.config_file[0]).is_file():
+                self.error(
+                    "the path provided by '--config-file' does not point to a file"
+                )
+            toml_path = Path(args.config_file[0])
+            # try to parse the toml-file
+            toml = tomlkit.parse(toml_path.read_text())
+            try:
+                pip_licenses_options = toml["pip_licenses"]
+            except tomlkit.exceptions.NonExistentKey:
+                self.error(
+                    "no key 'pip_licenses' in the provided .toml-file \n"
+                )
+            # iterate through the options and set them
+            for option in pip_licenses_options:
+                if option in MAP_TO_ENUM_CONFIG:
+                    option_value = MAP_TO_ENUM_CONFIG[option][
+                        value_to_enum_key(pip_licenses_options[option])
+                    ]
+                else:
+                    option_value = pip_licenses_options[option]
+                setattr(args, option, option_value)
+            return args
 
     def _verify_args(self, args: CustomNamespace) -> None:
         if args.with_license_file is False and (
@@ -748,6 +785,12 @@ MAP_DEST_TO_ENUM = {
     "from_": FromArg,
     "order": OrderArg,
     "format_": FormatArg,
+}
+
+MAP_TO_ENUM_CONFIG = {
+    "from": FromArg,
+    "order": OrderArg,
+    "format": FormatArg,
 }
 
 
@@ -847,6 +890,13 @@ def create_parser() -> CompatibleArgumentParser:
         metavar="PKG",
         default=[],
         help="only include selected packages in output",
+    )
+    common_options.add_argument(
+        "--config-file",
+        action="store",
+        type=str,
+        nargs=1,
+        help="read options from .toml-file",
     )
     format_options.add_argument(
         "-s",

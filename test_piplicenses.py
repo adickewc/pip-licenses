@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import copy
 import email
+import os
+import random
 import re
+import string
 import sys
 import unittest
 from enum import Enum, auto
@@ -15,6 +18,7 @@ import docutils.frontend
 import docutils.parsers.rst
 import docutils.utils
 import pytest
+import tomlkit
 from _pytest.capture import CaptureFixture
 
 import piplicenses
@@ -851,3 +855,73 @@ def test_verify_args(
     capture = capsys.readouterr().err
     for arg in ("invalid code", "--filter-code-page"):
         assert arg in capture
+
+
+def test_toml_parser():
+    config_file_options_list = [
+        "ignore_packages",
+        "packages",
+        "allow_only",
+        "fail_on",
+    ]
+    config_file_options_bool = [
+        "summary",
+        "with_sytem",
+        "with_authors",
+        "with_urls",
+        "with_description",
+        "with_license_file",
+        "no_license_path",
+        "with_notice_file",
+        "filter_strings",
+    ]
+    config_file_options_str = ["from", "order", "format"]
+    config_file_output = ["output_file"]
+
+    str_options = {
+        "from": ["meta", "classifier", "mixed", "all"],
+        "order": ["license", "name", "author", "url"],
+        "format": ["plain", "markdown", "rst", "confluence", "html", "json"],
+    }
+
+    config = (
+        {option: True for option in config_file_options_bool}
+        | {
+            option: [
+                "".join(
+                    random.choice(string.ascii_lowercase) for _ in range(10)
+                )
+                for _ in range(3)
+            ]
+            for option in config_file_options_list
+        }
+        | {
+            option: random.choice(str_options[option])
+            for option in config_file_options_str
+        }
+        | {
+            "output_file": "".join(
+                [random.choice(string.ascii_lowercase) for _ in range(10)]
+            )
+        }
+    )
+
+    # write toml
+    doc = tomlkit.document()
+    pip_licenses = tomlkit.table()
+    for key, value in config.items():
+        pip_licenses.add(key, value)
+    doc.add("pip_licenses", pip_licenses)
+    with open("test_toml.toml", "w") as toml_file:
+        toml_file.write(doc.as_string())
+
+    parser = create_parser()
+    args = parser.parse_args(["--config-file", "test_toml.toml"])
+    for option in (
+        config_file_options_list
+        + config_file_options_bool
+        + config_file_output
+    ):
+        assert getattr(args, option) == config[option]
+
+    os.remove("test_toml.toml")
